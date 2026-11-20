@@ -85,7 +85,16 @@ def recognize_new_drawing(image_bytes: bytes) -> Dict[str, Any]:
     except APITimeoutError as error:
         raise ValueError("视觉接口响应超时，请根据原图手工核对填写。") from error
     except (APIError, ValueError) as error:
-        raise ValueError("视觉接口暂不可用，请根据原图手工核对填写。") from error
+        error_type = type(error).__name__
+        status_code = getattr(error, "status_code", None)
+        detail = (
+            f"{error_type}, HTTP {status_code}"
+            if status_code is not None
+            else error_type
+        )
+        raise ValueError(
+            f"视觉接口暂不可用（{detail}），请根据原图手工核对填写。"
+        ) from error
 
     usage = getattr(response, "usage", None)
     result = {
