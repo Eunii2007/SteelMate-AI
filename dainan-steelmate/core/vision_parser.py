@@ -58,7 +58,7 @@ VISION_PROMPT = (
 VISION_IMAGE_BUDGET = 256 * 1024
 VISION_TILE_SIDE = 2048
 MAX_VISION_TILES = 8
-VISION_TIMEOUT_SECONDS = 10.0
+VISION_TIMEOUT_SECONDS = 20.0
 
 
 def _encode_vision_image(image: Image.Image, max_side: int = VISION_TILE_SIDE) -> str:
@@ -195,7 +195,7 @@ def recognize_new_drawing(image_bytes: bytes) -> Dict[str, Any]:
             for label, image_url in chain((first_view,), views):
                 remaining = VISION_TIMEOUT_SECONDS - (monotonic() - started)
                 if remaining <= 0:
-                    result["error"] = "图纸处理达到 10 秒等待预算，请根据原图手工核对填写。"
+                    result["error"] = f"图纸处理达到 {VISION_TIMEOUT_SECONDS:g} 秒等待预算，请根据原图手工核对填写。"
                     return result
                 response = client.chat.completions.create(
                     model=model,
