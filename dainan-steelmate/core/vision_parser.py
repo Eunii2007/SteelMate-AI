@@ -1,7 +1,15 @@
 import os
 import json
 import base64
-from typing import Dict, Any, Optional
+import io
+import math
+import warnings
+from decimal import Decimal, InvalidOperation
+from itertools import chain
+from time import monotonic
+from typing import Dict, Any, Optional, Iterator
+
+from PIL import Image, ImageOps
 
 # 内置 15 张标准测试图纸 (TP-001 ~ TP-015) 的高精度结构化参数映射（支持离线秒级演示与视觉大模型双重模式）
 BUILTIN_DRAWING_SPECS: Dict[str, Dict[str, Any]] = {
@@ -45,6 +53,112 @@ VISION_PROMPT = (
 )
 
 
+# 256 KiB 图片经 Base64 编码约为 342 KiB，给网关请求体留下余量。
+# 这是保守的发送预算，不代表服务商公布的上限。
+VISION_IMAGE_BUDGET = 256 * 1024
+VISION_TILE_SIDE = 2048
+MAX_VISION_TILES = 8
+VISION_TIMEOUT_SECONDS = 10.0
+
+
+def _encode_vision_image(image: Image.Image, max_side: int = VISION_TILE_SIDE) -> str:
+    drawing = image.copy()
+    drawing.thumbnail((max_side, max_side), Image.Resampling.LANCZOS)
+    while True:
+        buffer = io.BytesIO()
+        drawing.save(buffer, format="PNG", optimize=True)
+        if buffer.tell() <= VISION_IMAGE_BUDGET:
+            return "data:image/png;base64," + base64.b64encode(buffer.getvalue()).decode("ascii")
+        for quality in (90, 80, 70):
+            buffer = io.BytesIO()
+            drawing.save(buffer, format="JPEG", quality=quality, optimize=True)
+            if buffer.tell() <= VISION_IMAGE_BUDGET:
+                return "data:image/jpeg;base64," + base64.b64encode(buffer.getvalue()).decode("ascii")
+        longest = max(drawing.size)
+        if longest <= 768:
+            raise ValueError("图纸局部压缩后仍过大，请裁剪所需零件区域，或根据原图手工填写。")
+        next_side = max(768, int(longest * 0.8))
+        drawing.thumbnail((next_side, next_side), Image.Resampling.LANCZOS)
+
+
+def _drawing_views(image_bytes: bytes) -> Iterator[tuple[str, str]]:
+    if not isinstance(image_bytes, bytes) or not image_bytes or len(image_bytes) > 200 * 1024 * 1024:
+        raise ValueError("图纸须为不超过 200 MB 的有效图片。")
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", Image.DecompressionBombWarning)
+            with Image.open(io.BytesIO(image_bytes), formats=("PNG", "JPEG", "WEBP")) as source:
+                # 限制解码内存；超大画布应先按零件分图，不在云端无限展开。
+                if source.width * source.height > 40_000_000 or getattr(source, "n_frames", 1) != 1:
+                    raise ValueError("图纸超过 4000 万像素或包含动画，请按零件分图后上传。")
+                source.load()
+                oriented = ImageOps.exif_transpose(source).convert("RGBA")
+                drawing = Image.new("RGB", oriented.size, "white")
+                drawing.paste(oriented, mask=oriented.getchannel("A"))
+    except (OSError, Image.DecompressionBombError, Image.DecompressionBombWarning) as error:
+        raise ValueError("无法安全读取图纸，请使用有效的 PNG、JPEG 或 WebP 图片。") from error
+
+    columns = math.ceil(drawing.width / VISION_TILE_SIDE)
+    rows = math.ceil(drawing.height / VISION_TILE_SIDE)
+    if columns * rows > MAX_VISION_TILES:
+        raise ValueError("图纸需要超过 8 个识别局部，请按零件分图，或根据原图手工填写。")
+    if columns == rows == 1:
+        yield "整张图纸", _encode_vision_image(drawing)
+        return
+
+    yield "整张图纸概览", _encode_vision_image(drawing, 1600)
+    for row in range(rows):
+        for column in range(columns):
+            # 局部重叠，减少尺寸文字恰好被切在分界线上的情况。
+            left = max(0, int(column * drawing.width / columns) - 96)
+            top = max(0, int(row * drawing.height / rows) - 96)
+            right = min(drawing.width, math.ceil((column + 1) * drawing.width / columns) + 96)
+            bottom = min(drawing.height, math.ceil((row + 1) * drawing.height / rows) + 96)
+            yield (f"同一零件局部：第 {row + 1} 行、第 {column + 1} 列",
+                   _encode_vision_image(drawing.crop((left, top, right, bottom))))
+
+
+def _merge_drawing_fields(parts: list[dict]) -> dict:
+    merged = {}
+    for field in DRAWING_FIELDS:
+        values = set()
+        for part in parts:
+            value = part.get(field)
+            if value is None or isinstance(value, bool):
+                continue
+            if field in ("material", "shape"):
+                if isinstance(value, str) and value.strip():
+                    values.add(value.strip().upper() if field == "material" else value.strip().lower())
+            else:
+                try:
+                    number = Decimal(str(value))
+                except InvalidOperation:
+                    continue
+                if not number.is_finite() or not 0 <= number <= 2**53 - 1 or (field != "inner_dim_mm" and number == 0):
+                    continue
+                if field == "quantity" and number != number.to_integral_value():
+                    continue
+                values.add(number)
+        # 不用“最后一次识别覆盖”：冲突字段留空，交由原有人工确认流程处理。
+        selected = next(iter(values)) if len(values) == 1 else None
+        if isinstance(selected, Decimal):
+            selected = int(selected) if field == "quantity" else float(selected)
+        merged[field] = selected
+    return merged
+
+
+def _has_required_fields(fields: dict) -> bool:
+    shape = fields.get("shape")
+    if shape not in {"flange", "plate", "round_bar"}:
+        return False
+    required = ["material", "shape", "outer_dim_mm", "thickness_mm", "quantity"]
+    if shape == "flange":
+        required.append("inner_dim_mm")
+    elif shape == "plate":
+        required.append("width_mm")
+    return all(fields.get(field) is not None for field in required)
+
+
 def model_connection_settings() -> tuple[str, str | None, str]:
     return (
         os.environ.get("OPENAI_API_KEY", "").strip(),
@@ -66,55 +180,75 @@ def recognize_new_drawing(image_bytes: bytes) -> Dict[str, Any]:
     except ImportError as error:
         raise ValueError("当前环境未安装视觉接口依赖，已进入手工填写。") from error
 
-    b64_img = base64.b64encode(image_bytes).decode("ascii")
+    started = monotonic()
+    views = _drawing_views(image_bytes)
+    first_view = next(views)
+    result = {
+        "fields": {}, "model": model,
+        "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+        "error": None,
+    }
+    parts = []
     try:
         with OpenAI(api_key=api_key, base_url=base_url,
-                    timeout=60.0, max_retries=0) as client:
-            response = client.chat.completions.create(
-                model=model,
-                temperature=0.0,
-                response_format={"type": "json_object"},
-                messages=[
-                    {"role": "system", "content": VISION_PROMPT},
-                    {"role": "user", "content": [
-                        {"type": "text", "text": "请提取图纸上的核价参数。"},
-                        {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64_img}"}},
-                    ]},
-                ],
-            )
+                    timeout=VISION_TIMEOUT_SECONDS, max_retries=0) as client:
+            for label, image_url in chain((first_view,), views):
+                remaining = VISION_TIMEOUT_SECONDS - (monotonic() - started)
+                if remaining <= 0:
+                    result["error"] = "图纸处理达到 10 秒等待预算，请根据原图手工核对填写。"
+                    return result
+                response = client.chat.completions.create(
+                    model=model,
+                    timeout=remaining,
+                    temperature=0.0,
+                    response_format={"type": "json_object"},
+                    messages=[
+                        {"role": "system", "content": VISION_PROMPT},
+                        {"role": "user", "content": [
+                            {"type": "text", "text": f"{label}。请只提取此图明确标注的核价参数。"
+                             "各次图片均来自同一张图纸；局部没有标注的字段填 null，不从像素或概览推算。"},
+                            {"type": "image_url", "image_url": {"url": image_url}},
+                        ]},
+                    ],
+                )
+                result["model"] = getattr(response, "model", None) or model
+                usage = getattr(response, "usage", None)
+                for key, previous in result["usage"].items():
+                    count = getattr(usage, key, None)
+                    result["usage"][key] = previous + count if (
+                        previous is not None and type(count) is int and count >= 0
+                    ) else None
+                try:
+                    fields = json.loads(response.choices[0].message.content, parse_constant=lambda _: None)
+                    if not isinstance(fields, dict):
+                        raise ValueError
+                except (AttributeError, IndexError, ValueError, TypeError):
+                    result["error"] = "视觉接口未返回可用参数，请根据原图手工填写。"
+                    return result
+                parts.append(fields)
+                # 参数齐全即停止；缺参时才在剩余等待预算内补读局部。
+                if _has_required_fields(_merge_drawing_fields(parts)):
+                    break
     except APITimeoutError as error:
+        if parts:
+            result["error"] = "部分图纸局部识别超时，已保留已返回用量，请根据原图手工核对填写。"
+            return result
         raise ValueError("视觉接口响应超时，请根据原图手工核对填写。") from error
     except (APIError, ValueError) as error:
         error_type = type(error).__name__
         status_code = getattr(error, "status_code", None)
-        detail = (
-            f"{error_type}, HTTP {status_code}"
-            if status_code is not None
-            else error_type
-        )
-        raise ValueError(
-            f"视觉接口暂不可用（{detail}），请根据原图手工核对填写。"
-        ) from error
+        detail = f"{error_type}, HTTP {status_code}" if status_code is not None else error_type
+        message = f"视觉接口暂不可用（{detail}），请根据原图手工核对填写。"
+        if status_code == 413:
+            message = "图纸已自动优化，但接口仍拒绝请求（HTTP 413），请核实服务商请求体上限或裁剪零件区域。"
+        if parts:
+            result["error"] = message
+            return result
+        raise ValueError(message) from error
+    finally:
+        views.close()
 
-    usage = getattr(response, "usage", None)
-    result = {
-        "fields": {},
-        "model": getattr(response, "model", None) or model,
-        "usage": {
-            "prompt_tokens": getattr(usage, "prompt_tokens", None),
-            "completion_tokens": getattr(usage, "completion_tokens", None),
-            "total_tokens": getattr(usage, "total_tokens", None),
-        },
-        "error": None,
-    }
-    try:
-        fields = json.loads(response.choices[0].message.content, parse_constant=lambda _: None)
-        if not isinstance(fields, dict):
-            raise ValueError
-    except (AttributeError, IndexError, ValueError, TypeError):
-        result["error"] = "视觉接口未返回可用参数，请根据原图手工填写。"
-    else:
-        result["fields"] = {field: fields.get(field) for field in DRAWING_FIELDS}
+    result["fields"] = _merge_drawing_fields(parts)
     return result
 
 
