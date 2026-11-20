@@ -69,7 +69,7 @@ def recognize_new_drawing(image_bytes: bytes) -> Dict[str, Any]:
     b64_img = base64.b64encode(image_bytes).decode("ascii")
     try:
         with OpenAI(api_key=api_key, base_url=base_url,
-                    timeout=15.0, max_retries=0) as client:
+                    timeout=60.0, max_retries=0) as client:
             response = client.chat.completions.create(
                 model=model,
                 temperature=0.0,
