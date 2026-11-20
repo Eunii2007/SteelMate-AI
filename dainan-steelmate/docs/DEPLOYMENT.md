@@ -4,15 +4,15 @@
 
 本目录是可提交到 GitHub 的源码快照，业务源码及 `core/` 算料公式与原项目一致。已增加固定版本依赖、Git 忽略规则、Docker 配置和 GitHub 自动测试。
 
-尚未创建远程仓库、上传 GitHub、创建 Cloudflare 资源，也未配置域名、服务器或自动发布流程。整理机器没有 Docker，本次未执行容器镜像构建或 Linux 容器运行验证。
+对应 GitHub 为 `Eunii2007/SteelMate-AI`，应用在 `dainan-steelmate/` 子目录。匿名隔离已在本地实现，线上 Cookie 与浏览器策略仍须按 [验收步骤](VISITOR_ISOLATION.md) 验证。本轮未推送、修改 Secrets、重新部署或执行容器构建。
 
 ## 先上传 GitHub
 
-1. 新建仓库，建议名称 `dainan-steelmate`，首次上传建议设为 Private。
-2. 将此目录中的文件提交到仓库根目录，入口应是根目录 `app.py`，README、requirements.txt 与其同级。
+1. 使用现有仓库 `https://github.com/Eunii2007/SteelMate-AI`。
+2. 将本目录的改动更新到仓库 `dainan-steelmate/`，入口为 `dainan-steelmate/app.py`，README、requirements.txt 与其同级。
 3. 确认 `.streamlit/config.toml`、`.github/workflows/tests.yml`、`.gitignore` 均存在。
 4. 提交中不应出现 `.env`、`secrets.toml`、API Key、SQLite 数据库、用户上传图或本地运行环境。
-5. 推送后查看 GitHub Actions 测试结果。自动测试使用模拟模型响应，不需要把真实 Key 放到 Actions。
+5. 推送须由你确认后自行执行。自动测试使用临时库与模拟模型，不需要真实视觉 Key；GitHub Actions 若使用仓库根级工作流，应将 working-directory 设为 `dainan-steelmate`。
 
 GitHub 的 Public / Private 只决定源码仓库可见性。应用是否能被外部访问，由运行服务与访问控制决定。
 
@@ -49,7 +49,7 @@ docker run -d --name dainan-steelmate \
   dainan-steelmate:20261120
 ```
 
-只运行离线预设时，可以省去 `--env-file .env`。挂载卷用于保存 SQLite 记录与原图，更新镜像时保留该数据卷，正式使用后另做备份。
+即使只运行离线预设，也需要配置匿名访客签名密钥。按 README 生成一次，配置 `DAINAN_STORAGE_MODE=visitor` 和 `DAINAN_VISITOR_SIGNING_KEY`，通过 `--env-file .env` 注入。挂载卷内的 `visitors/` 用于保存独立 SQLite 记录与原图，更新镜像时保留该数据卷，正式使用后另做备份。旧共享 `quotes.sqlite3` 不自动迁移或读取。
 
 容器使用 `0.0.0.0:8501` 监听，由上面的端口映射限制到服务器本机。不要为了接入 Tunnel 关闭 Streamlit 的 XSRF 或 CORS 保护。容器健康检查访问 `/_stcore/health`。配置方式参考 [Streamlit Docker 官方文档](https://docs.streamlit.io/deploy/tutorials/docker)。
 
@@ -71,9 +71,7 @@ Tunnel Token 仅保存在服务器配置中，不写入 README、源码或 GitHu
 
 ## 对外开放前的现有约束
 
-当前 `quote_store.py` 按单人工作台设计，所有连接共用历史报价与固定草稿记录。只更换为空数据库，不能解决多访问者之间的记录共享。
-
-初次上线应先用于受控单人验收，之后再按选定方案实现独立访问者数据隔离或工厂账号隔离。确认隔离前，不在公开实例内输入真实客户信息或业务图纸。
+默认使用签名 Cookie 与每位访客独立数据库。缺少签名密钥会停止私有数据访问，不能通过清空数据库或设置 `DAINAN_QUOTE_DB` 绕过。公开实例禁止配置 `single_user` 模式。Community Cloud 的嵌入页面、第三方 Cookie 限制和免费磁盘寿命都需要真实上线后验证，不能用本机验收代替。
 
 上线验收至少包括：
 
