@@ -189,11 +189,13 @@ def recognize_new_drawing(image_bytes: bytes) -> Dict[str, Any]:
         "error": None,
     }
     parts = []
+    request_started = started
     try:
         with OpenAI(api_key=api_key, base_url=base_url,
                     timeout=VISION_TIMEOUT_SECONDS, max_retries=0) as client:
             for label, image_url in chain((first_view,), views):
-                remaining = VISION_TIMEOUT_SECONDS - (monotonic() - started)
+                request_started = monotonic()
+                remaining = VISION_TIMEOUT_SECONDS - (request_started - started)
                 if remaining <= 0:
                     result["error"] = f"图纸处理达到 {VISION_TIMEOUT_SECONDS:g} 秒等待预算，请根据原图手工核对填写。"
                     return result
@@ -230,10 +232,28 @@ def recognize_new_drawing(image_bytes: bytes) -> Dict[str, Any]:
                 if _has_required_fields(_merge_drawing_fields(parts)):
                     break
     except APITimeoutError as error:
+        # 仅展示固定阶段名称和计时，不输出异常正文、请求头或凭据。
+        stages = {
+            "ConnectTimeout": "建立连接超时",
+            "ReadTimeout": "读取响应超时",
+            "WriteTimeout": "上传请求超时",
+            "PoolTimeout": "等待连接池超时",
+        }
+        stage = "超时阶段未返回"
+        cause = error
+        for _ in range(8):
+            if type(cause).__name__ in stages:
+                stage = stages[type(cause).__name__]
+                break
+            cause = getattr(cause, "__cause__", None) or getattr(cause, "__context__", None)
+            if cause is None:
+                break
+        now = monotonic()
+        detail = f"{stage}；请求等待 {max(0, now - request_started):.1f}s；总耗时 {max(0, now - started):.1f}s"
         if parts:
-            result["error"] = "部分图纸局部识别超时，已保留已返回用量，请根据原图手工核对填写。"
+            result["error"] = f"部分图纸局部识别超时（{detail}），已保留已返回用量，请根据原图手工核对填写。"
             return result
-        raise ValueError("视觉接口响应超时，请根据原图手工核对填写。") from error
+        raise ValueError(f"视觉接口响应超时（{detail}），请根据原图手工核对填写。") from error
     except (APIError, ValueError) as error:
         error_type = type(error).__name__
         status_code = getattr(error, "status_code", None)
