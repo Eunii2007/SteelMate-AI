@@ -31,7 +31,7 @@ def order_snapshot(app):
 class OrderItemEditTest(unittest.TestCase):
     def setUp(self):
         directory = self.enterContext(TemporaryDirectory())
-        self.enterContext(patch.dict(os.environ, {"DAINAN_QUOTE_DB": str(Path(directory) / "quotes.sqlite3")}))
+        self.enterContext(patch.dict(os.environ, {"DAINAN_STORAGE_MODE": "single_user", "DAINAN_QUOTE_DB": str(Path(directory) / "quotes.sqlite3")}))
 
     def two_items(self, *, pad_margin=12):
         app = AppTest.from_file(str(ROOT / "app.py"))

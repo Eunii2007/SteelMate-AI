@@ -46,7 +46,7 @@ def demo_snapshot(sample: str, **changes) -> dict:
 class ScrapReviewPersistenceTest(unittest.TestCase):
     def test_review_round_trip_keeps_saved_quotes_and_lines_independent(self):
         directory = self.enterContext(TemporaryDirectory())
-        self.enterContext(patch.dict(os.environ, {"DAINAN_QUOTE_DB": str(Path(directory) / "quotes.sqlite3")}))
+        self.enterContext(patch.dict(os.environ, {"DAINAN_STORAGE_MODE": "single_user", "DAINAN_QUOTE_DB": str(Path(directory) / "quotes.sqlite3")}))
         flange = demo_snapshot("TP-001")
         pad = demo_snapshot("TP-002")
         quote_id = save_quote("demo-flange", flange)

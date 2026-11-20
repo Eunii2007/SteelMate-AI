@@ -46,6 +46,7 @@ class CustomerReplyTest(unittest.TestCase):
     def open_copy(self) -> AppTest:
         directory = self.enterContext(TemporaryDirectory())
         self.enterContext(patch.dict(os.environ, {
+            "DAINAN_STORAGE_MODE": "single_user",
             "DAINAN_QUOTE_DB": str(Path(directory) / "quotes.sqlite3"), "OPENAI_API_KEY": "fixture-key",
         }))
         issued = "2026-11-17 10:00:00"

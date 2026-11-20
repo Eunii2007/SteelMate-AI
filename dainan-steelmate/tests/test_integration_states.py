@@ -22,7 +22,7 @@ def click(app: AppTest, label: str) -> None:
 class IntegrationStateTest(unittest.TestCase):
     def setUp(self):
         directory = self.enterContext(TemporaryDirectory())
-        self.enterContext(patch.dict(os.environ, {"DAINAN_QUOTE_DB": str(Path(directory) / "quotes.sqlite3")}))
+        self.enterContext(patch.dict(os.environ, {"DAINAN_STORAGE_MODE": "single_user", "DAINAN_QUOTE_DB": str(Path(directory) / "quotes.sqlite3")}))
         self.old_id = save_quote("original", demo_snapshot("TP-001"))
         self.new_id = save_quote("revision", demo_snapshot("TP-001", quantity=30), self.old_id)
 

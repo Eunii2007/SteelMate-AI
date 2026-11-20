@@ -41,7 +41,7 @@ def open_workbench() -> AppTest:
 class ContestFlowsTest(unittest.TestCase):
     def setUp(self):
         directory = self.enterContext(TemporaryDirectory())
-        self.enterContext(patch.dict(os.environ, {"DAINAN_QUOTE_DB": str(Path(directory) / "quotes.sqlite3")}))
+        self.enterContext(patch.dict(os.environ, {"DAINAN_STORAGE_MODE": "single_user", "DAINAN_QUOTE_DB": str(Path(directory) / "quotes.sqlite3")}))
 
     def test_judge_flow_requires_confirmation_and_opens_scrap_demo(self):
         app = open_workbench()
@@ -184,7 +184,7 @@ class ContestFlowsTest(unittest.TestCase):
 
     def test_order_lines_are_frozen_and_survive_saving_to_history(self):
         directory = self.enterContext(TemporaryDirectory())
-        self.enterContext(patch.dict(os.environ, {"DAINAN_QUOTE_DB": str(Path(directory) / "quotes.sqlite3")}))
+        self.enterContext(patch.dict(os.environ, {"DAINAN_STORAGE_MODE": "single_user", "DAINAN_QUOTE_DB": str(Path(directory) / "quotes.sqlite3")}))
         workbench = open_workbench()
 
         def action(label):
@@ -242,6 +242,7 @@ class ContestFlowsTest(unittest.TestCase):
 
     def test_saved_inquiry_survives_reopen_and_copy_reprices_independently(self):
         with TemporaryDirectory() as directory, patch.dict(os.environ, {
+            "DAINAN_STORAGE_MODE": "single_user",
             "DAINAN_QUOTE_DB": str(Path(directory) / "quotes.sqlite3"),
         }):
             workbench = open_workbench()
@@ -301,6 +302,7 @@ class ContestFlowsTest(unittest.TestCase):
 
     def test_delete_legacy_inquiry_preserves_revision_and_reserves_number(self):
         with TemporaryDirectory() as directory, patch.dict(os.environ, {
+            "DAINAN_STORAGE_MODE": "single_user",
             "DAINAN_QUOTE_DB": str(Path(directory) / "quotes.sqlite3"),
         }):
             path = os.environ["DAINAN_QUOTE_DB"]
@@ -431,12 +433,12 @@ class ContestFlowsTest(unittest.TestCase):
             model="test-model", usage=SimpleNamespace(prompt_tokens=30, completion_tokens=8, total_tokens=38),
             choices=[SimpleNamespace(message=SimpleNamespace(content="无可用 JSON"))],
         )
-        result = recognize_new_drawing(b"test image")
+        result = recognize_new_drawing((ROOT / "data/Test_Images/TP-001.png").read_bytes())
         self.assertEqual(result["usage"]["total_tokens"], 38)
         self.assertEqual(result["fields"], {})
         self.assertTrue(result["error"])
         self.assertEqual(client.call_args.kwargs["max_retries"], 0)
-        self.assertEqual(client.call_args.kwargs["timeout"], 15.0)
+        self.assertEqual(client.call_args.kwargs["timeout"], 10.0)
 
     def test_synthetic_cases_use_review_gate(self):
         samples = json.loads((BLIND_TEST / "人工核对基准.json").read_text(encoding="utf-8"))

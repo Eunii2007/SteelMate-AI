@@ -35,7 +35,7 @@ class CustomerValidityTest(unittest.TestCase):
     def setUp(self):
         self.directory = Path(self.enterContext(TemporaryDirectory()))
         self.database = self.directory / "quotes.sqlite3"
-        self.enterContext(patch.dict(os.environ, {"DAINAN_QUOTE_DB": str(self.database)}))
+        self.enterContext(patch.dict(os.environ, {"DAINAN_STORAGE_MODE": "single_user", "DAINAN_QUOTE_DB": str(self.database)}))
 
     def open_record(self, quote_id):
         app = AppTest.from_file(str(ROOT / "app.py"))
