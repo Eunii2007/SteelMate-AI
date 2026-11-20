@@ -1,0 +1,102 @@
+[
+  {
+    "file": "BL-01.png",
+    "style": "CAD",
+    "source": "合成",
+    "reference_fields": {
+      "material": "304",
+      "shape": "plate",
+      "outer_dim_mm": 620,
+      "inner_dim_mm": null,
+      "width_mm": 370,
+      "thickness_mm": 8,
+      "quantity": 12
+    },
+    "expected_review": "需确认",
+    "simulated_reply": {}
+  },
+  {
+    "file": "BL-02.png",
+    "style": "CAD",
+    "source": "合成",
+    "reference_fields": {
+      "material": "2205",
+      "shape": "flange",
+      "outer_dim_mm": 360,
+      "inner_dim_mm": 136,
+      "width_mm": null,
+      "thickness_mm": 18,
+      "quantity": 5
+    },
+    "expected_review": "需确认",
+    "simulated_reply": {}
+  },
+  {
+    "file": "BL-03.png",
+    "style": "手绘",
+    "source": "合成",
+    "reference_fields": {
+      "material": "316L",
+      "shape": "flange",
+      "outer_dim_mm": 255,
+      "inner_dim_mm": 105,
+      "width_mm": null,
+      "thickness_mm": null,
+      "quantity": 12
+    },
+    "expected_review": "NEED_INFO",
+    "simulated_reply": {
+      "thickness_mm": 9
+    }
+  },
+  {
+    "file": "BL-04.png",
+    "style": "手绘",
+    "source": "合成",
+    "reference_fields": {
+      "material": "304",
+      "shape": "round_bar",
+      "outer_dim_mm": 66,
+      "inner_dim_mm": null,
+      "width_mm": null,
+      "thickness_mm": 280,
+      "quantity": 14
+    },
+    "expected_review": "需确认",
+    "simulated_reply": {}
+  },
+  {
+    "file": "BL-05.png",
+    "style": "微信批注",
+    "source": "合成",
+    "reference_fields": {
+      "material": "201",
+      "shape": "plate",
+      "outer_dim_mm": 470,
+      "inner_dim_mm": null,
+      "width_mm": 265,
+      "thickness_mm": 4.5,
+      "quantity": 9
+    },
+    "expected_review": "需确认",
+    "simulated_reply": {}
+  },
+  {
+    "file": "BL-06.png",
+    "style": "微信批注",
+    "source": "合成",
+    "reference_fields": {
+      "material": "316L",
+      "shape": "flange",
+      "outer_dim_mm": null,
+      "inner_dim_mm": 116,
+      "width_mm": null,
+      "thickness_mm": 12,
+      "quantity": 20
+    },
+    "expected_review": "NEED_INFO",
+    "simulated_reply": {
+      "outer_dim_mm": 300
+    }
+  }
+]
