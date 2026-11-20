@@ -33,6 +33,7 @@ from quote_store import (
     get_quote_drawing, get_scrap_review, list_quotes, parse_quote_deadline, quote_deadline_text, quote_number, quote_validity,
     load_work_draft, save_quote, save_scrap_review, save_work_draft, validate_drawing_image,
 )
+from visitor_ui import guarded_callback, private_download_button, private_image, visitor_gate
 
 
 DATA_DIR = Path(__file__).resolve().parent / "data"
@@ -376,8 +377,8 @@ def render_work_draft_gate() -> bool:
         st.text(f'当前询盘：{inquiry.get("filename", "未保存整单")} · 本单清单 {count} 项')
         st.caption("图纸和输入会一起恢复。正在填写或编辑的零件需重新人工确认，确认前不生成报价。")
         resume, discard = st.columns(2, gap="small")
-        resume.button("继续上次询盘", type="primary", width="stretch", on_click=restore_work_draft)
-        discard.button("放弃并新建", width="stretch", on_click=discard_work_draft)
+        resume.button("继续上次询盘", type="primary", width="stretch", on_click=guarded_callback(restore_work_draft))
+        discard.button("放弃并新建", width="stretch", on_click=guarded_callback(discard_work_draft))
         if error := st.session_state.get("work_draft_load_error"):
             st.error(error)
     return False
@@ -399,7 +400,7 @@ def render_work_draft_status() -> None:
         st.session_state.work_draft_dirty = False
     if st.session_state.get("work_draft_error"):
         st.warning("草稿尚未保存。页面输入仍在，请检查本机数据库是否可写后重试；重试成功前请勿关闭。")
-        st.button("重试保存草稿", on_click=work_draft_changed)
+        st.button("重试保存草稿", on_click=guarded_callback(work_draft_changed))
     elif updated := st.session_state.get("work_draft_saved_at"):
         st.html(f'<p class="draft-save-status" role="status">草稿已保存 · '
                 f'<time>{escape(quote_deadline_text(updated))}</time>（北京时间）</p>')
@@ -478,9 +479,9 @@ def render_quote_deadline(run: dict) -> bool:
         # 以空值为控件默认值，清空输入时不会自动补回旧时间。
         date_column.date_input("截止日期", value=None, key=f"{prefix}-date", format="YYYY-MM-DD",
                                min_value=datetime.min.date(), max_value=datetime.max.date(),
-                               on_change=quote_deadline_changed, args=(prefix,))
+                               on_change=guarded_callback(quote_deadline_changed), args=(prefix,))
         time_column.time_input("截止时间", value=None, key=f"{prefix}-time", step=1, format="24h",
-                               on_change=quote_deadline_changed, args=(prefix,))
+                               on_change=guarded_callback(quote_deadline_changed), args=(prefix,))
         st.caption("北京时间 · 新询盘默认 7 天，可按本次约定调整。")
         run["valid_until"] = selected_quote_deadline()
         render_validity({"valid_until": run["valid_until"]}, warn_expired=False)
@@ -673,7 +674,7 @@ def render_drawing_view(drawing: dict | None, context: str, *, thumbnail: bool =
         return
     filename = drawing["filename"]
     if thumbnail:
-        st.image(drawing["data"], caption=filename, alt=f"留存原图 {filename}", width=360)
+        private_image(drawing["data"], drawing["mime_type"], caption=filename, alt=f"留存原图 {filename}", width=360)
     encoded = base64.b64encode(drawing["data"]).decode("ascii")
     panel_id = f"drawing-view-{context}"
     st.html(f"""
@@ -805,24 +806,24 @@ def render_inputs() -> str | None:
     if st.session_state.get("drawing_run") or st.session_state.get("drawing_review"):
         heading, new = st.columns((2, 1), gap="small", vertical_alignment="center")
         heading.html('<h2 class="panel-heading">图纸与询盘</h2>')
-        new.button("新询盘", key="new-inquiry-action", on_click=start_new_inquiry, width="stretch")
+        new.button("新询盘", key="new-inquiry-action", on_click=guarded_callback(start_new_inquiry), width="stretch")
     else:
         st.html('<h2 class="panel-heading">图纸与询盘</h2>')
     revision = st.session_state.get("upload_revision", 0)
     upload_key = f"upload_{revision}" if revision else "upload"
     upload = st.file_uploader("上传图纸", type=["png", "jpg", "jpeg", "webp"],
-                              key=upload_key, on_change=upload_changed, args=(upload_key,))
+                              key=upload_key, on_change=guarded_callback(upload_changed), args=(upload_key,))
     manual_entry = st.session_state.get("manual_entry", False)
     if not upload and not st.session_state.get("sample") and not manual_entry:
         limit_mb = st.get_option("server.maxUploadSize")
         st.caption(f"微信草图或 CAD 截图 · PNG、JPG、WebP · 单张 ≤ {limit_mb} MB")
-        st.button("手动录入", key="manual_entry_action", on_click=start_manual_entry, width="stretch")
+        st.button("手动录入", key="manual_entry_action", on_click=guarded_callback(start_manual_entry), width="stretch")
     with st.expander("使用样例"):
         sample = st.selectbox("选择图纸样例", tuple(DRAWINGS), index=None, key="sample",
-                              placeholder="选择 TP-001 至 TP-015", on_change=select_sample)
+                              placeholder="选择 TP-001 至 TP-015", on_change=guarded_callback(select_sample))
         for preset_key, label in SCRIPTS:
             key = "judge_start" if preset_key == "PRESET_2_MISSING_THICK" else preset_key
-            st.button(label, key=key, on_click=select_preset, args=(preset_key,), width="stretch")
+            st.button(label, key=key, on_click=guarded_callback(select_preset), args=(preset_key,), width="stretch")
 
     if sample:
         st.caption("参数来源 · 预设参数")
@@ -845,7 +846,8 @@ def render_inputs() -> str | None:
             st.session_state.pop("inquiry_drawing", None)
             st.error("无法打开图片，请上传有效的 PNG、JPEG 或 WebP 图纸。")
             return
-        st.image(preview, caption=filename, alt=f"上传图纸 {filename}", width="stretch")
+        private_image(raw_bytes, st.session_state.inquiry_drawing["mime_type"],
+                      caption=filename, alt=f"上传图纸 {filename}", width="stretch")
         render_drawing_view(st.session_state.inquiry_drawing, "current", thumbnail=False)
         if "drawing_review" not in st.session_state:
             begin_review()
@@ -940,7 +942,7 @@ def render_customer_reply(review: dict, draft_keys: dict[str, str], form_key: st
     with st.container(key="customer-reply"):
         reply = st.text_area("粘贴客户回复", key=f"{form_key}_reply", max_chars=MAX_REPLY_LENGTH,
                              placeholder="例如 改成 30 件，厚度还是 12，要开专票",
-                             on_change=customer_reply_changed).strip()
+                             on_change=guarded_callback(customer_reply_changed)).strip()
         st.caption("点击识别时将发送给已配置的模型。工作台仅在当前会话保留回复原文。")
         fingerprint = hashlib.sha256(reply.encode("utf-8")).hexdigest()
         if st.button("识别修改项", key=f"{form_key}_recognize", disabled=not reply):
@@ -1094,12 +1096,12 @@ def render_review(filename: str) -> None:
         inquiry = {field: None for field in REVIEW_DIMENSIONS}
         with material_column:
             inquiry["material"] = st.text_input("材质牌号", key=common_keys["material"], max_chars=24,
-                                                on_change=invalidate_review_quote)
+                                                on_change=guarded_callback(invalidate_review_quote))
             field_feedback["材质牌号"] = st.empty()
         with shape_column:
             inquiry["shape"] = st.selectbox("零件形状", tuple(SHAPES), index=None, key=common_keys["shape"],
                                             format_func=SHAPES.__getitem__, placeholder="选择形状",
-                                            on_change=invalidate_review_quote)
+                                            on_change=guarded_callback(invalidate_review_quote))
             field_feedback["零件形状"] = st.empty()
         shape = inquiry["shape"]
         dimension_keys = {field: f"{form_key}_{shape}_{field}" for field, _ in SHAPE_DIMENSIONS.get(shape, ())}
@@ -1122,11 +1124,11 @@ def render_review(filename: str) -> None:
             with dimension_columns[index % 2]:
                 key = dimension_keys[field]
                 inquiry[field] = st.number_input(label, min_value=0.0, value=None, key=key,
-                                                 on_change=draft_dimension_changed, args=(shape, field, key))
+                                                 on_change=guarded_callback(draft_dimension_changed), args=(shape, field, key))
                 field_feedback[REVIEW_DIMENSIONS[field]] = st.empty()
         inquiry["quantity"] = st.number_input("采购数量（件）", min_value=1,
                                               value=None, key=common_keys["quantity"],
-                                              on_change=invalidate_review_quote)
+                                              on_change=guarded_callback(invalidate_review_quote))
         field_feedback["采购数量"] = st.empty()
         manual_checks = [item for item in reply_items if item.field != "invoice" and item.status in (CHANGED, NEEDS_REVIEW)]
         reply_checked = bool(manual_checks) and st.checkbox(
@@ -1765,7 +1767,7 @@ def render_customer_editor(draft_key: str, prefix: str) -> tuple[dict, bool]:
         st.markdown("**客户信息（选填）**")
         for field, (label, limit) in CUSTOMER_INFO_FIELDS.items():
             st.text_input(label, value=draft["fields"][field], max_chars=limit, key=f"{prefix}_{field}",
-                          on_change=customer_info_changed, args=(draft_key, prefix, field))
+                          on_change=guarded_callback(customer_info_changed), args=(draft_key, prefix, field))
         try:
             customer = clean_customer_info(draft["fields"])
         except ValueError as error:
@@ -1773,7 +1775,7 @@ def render_customer_editor(draft_key: str, prefix: str) -> tuple[dict, bool]:
             return {}, False
         if customer["delivery_note"]:
             st.checkbox("已核对交期备注", value=draft["delivery_confirmed"], key=f"{prefix}_delivery_confirmed",
-                        on_change=customer_info_changed, args=(draft_key, prefix, "delivery_confirmed"))
+                        on_change=guarded_callback(customer_info_changed), args=(draft_key, prefix, "delivery_confirmed"))
             if not draft["delivery_confirmed"]:
                 st.caption("请核对交期备注后再保存或发给客户。")
         return customer, not customer["delivery_note"] or draft["delivery_confirmed"]
@@ -1809,7 +1811,7 @@ def render_customer_delivery(snapshot: dict, quote_id: int | None) -> None:
         copy, download = st.columns(2, gap="small")
         with copy:
             render_copy_message(message, "复制微信报价", f"{prefix}customer-quote-copy", show_text=False)
-        download.download_button("下载客户报价单", printable_quotation(markup, title), f"{filename}.html",
+        private_download_button(download, "下载客户报价单", printable_quotation(markup, title), f"{filename}.html",
                                  "text/html", on_click=show_report, args=(markup,), width="stretch",
                                  icon=":material/download:", type="primary", key=f"{prefix}customer-quote-file")
 
@@ -1830,10 +1832,10 @@ def render_quote_exports(rows: list, demo: bool, *, quote_id: int | None = None,
     standalone = printable_quotation(markup, quote_title)
     st.markdown(f"**导出{quote_title}**")
     html_export, csv_export = st.columns(2, gap="small")
-    html_export.download_button("下载 HTML（可打印）", standalone, f"{filename}.html",
+    private_download_button(html_export, "下载 HTML（可打印）", standalone, f"{filename}.html",
                                 "text/html", on_click=show_report, args=(markup,), width="stretch",
                                 icon=":material/download:", type="primary", key="print-quote")
-    csv_export.download_button("下载 CSV", quotation_csv(rows), f"{filename}.csv",
+    private_download_button(csv_export, "下载 CSV", quotation_csv(rows), f"{filename}.csv",
                                "text/csv", on_click=show_report, args=(markup,), width="stretch", icon=":material/download:")
     st.caption("导出后可在页面下方预览，按 Ctrl+P 打印或另存为 PDF。")
 
@@ -1920,7 +1922,7 @@ def render_order_edit_status() -> None:
                 '<span>待更新 · 确认参数并核价后，点击「更新本项」。</span></div>')
     else:
         st.warning("编辑目标已不存在：该明细已从本单移除。请取消编辑后继续。")
-    st.button("取消编辑", key="cancel-order-edit", on_click=cancel_order_edit, width="stretch")
+    st.button("取消编辑", key="cancel-order-edit", on_click=guarded_callback(cancel_order_edit), width="stretch")
 
 
 def update_order_item(line_id: str, token: str, run_id: str, snapshot: dict, drawing: dict | None) -> bool:
@@ -1977,9 +1979,9 @@ def render_order_details(snapshot: dict, quote_id: int | None, line_ids: Sequenc
             detail, action = st.columns((8, 1.35), gap="small", vertical_alignment="center")
             detail.html(line_markup)
             action.button("编辑本项", key=f"edit-order-{line_id}", width="stretch",
-                          on_click=edit_order_item, args=(line_id,))
+                          on_click=guarded_callback(edit_order_item), args=(line_id,))
             action.button(f"移除第 {position} 项", key=f"remove-order-{line_id}", width="stretch",
-                          on_click=remove_order_item, args=(line_id,))
+                          on_click=guarded_callback(remove_order_item), args=(line_id,))
         else:
             st.html(line_markup)
     render_quote_cards({key: Decimal(amount) for key, amount in snapshot["totals"].items()}, totals=True)
@@ -2029,7 +2031,7 @@ def render_order_panel() -> None:
                     for position, line_id in enumerate(items, 1)
                     if line_id in st.session_state.get("order_drawings", {})}
         st.button("保存本单", key=save_key, disabled="quote_id" in feedback or not customer_ready or not validity_ready,
-                  on_click=save_inquiry, args=(save_key, snapshot, source_quote_id, "order_save", drawings))
+                  on_click=guarded_callback(save_inquiry), args=(save_key, snapshot, source_quote_id, "order_save", drawings))
         if source_quote_id is not None:
             st.caption(f"来源整单 · {quote_number(source_quote_id)}。本次保存生成新版报价，原记录保留。")
         if quote_id is not None:
@@ -2048,11 +2050,11 @@ def render_quote(run: dict, reviewing: bool = False, *, customer_panel, validity
     internal = st.expander("内部核价明细", expanded=bool(run or reviewing),
                            key=f'quote-internals-{st.session_state.get("customer_revision", 0)}', on_change="rerun")
     delivery = st.container()
-    if "target_margin" not in st.session_state:
-        st.session_state.target_margin = DEFAULT_TARGET_MARGIN
     with internal:
-        target = st.slider("售价毛利率", 5, 30, format="%d%%", key="target_margin",
-                           on_change=margin_changed)
+        target = st.slider("售价毛利率", 5, 30,
+                           value=st.session_state.get("target_margin", DEFAULT_TARGET_MARGIN),
+                           format="%d%%", key="target_margin",
+                           on_change=guarded_callback(margin_changed))
     ready = result.get("status") == "SUCCESS" and (not editing or run.get("order_edit_token") == editing["token"])
     quote, costs = reprice(run["inquiry"], target) if ready else ({}, ())
     with price_cards:
@@ -2115,18 +2117,18 @@ def render_quote(run: dict, reviewing: bool = False, *, customer_panel, validity
     if editing:
         st.button("更新本项", key=f'update-order-{editing["token"]}-{save_key}', type="primary", width="stretch",
                   disabled=editing["line_id"] not in st.session_state.get("order_items", {}) or not validity_ready,
-                  on_click=update_order_item,
+                  on_click=guarded_callback(update_order_item),
                   args=(editing["line_id"], editing["token"], run["run_id"], snapshot, run.get("drawing")))
         return quote
     save, add = st.columns(2, gap="small")
     save.button("保存询盘", key=f"save-inquiry-{save_key}", width="stretch",
                 disabled="quote_id" in feedback or not customer_ready or not validity_ready,
-                on_click=save_inquiry, args=(save_key, snapshot, source_quote_id, "quote_save",
+                on_click=guarded_callback(save_inquiry), args=(save_key, snapshot, source_quote_id, "quote_save",
                                            {1: run["drawing"]} if run.get("drawing") else None))
     in_order = run["run_id"] in st.session_state.get("order_items", {})
     add.button("加入本单", key=f"add-order-{save_key}", width="stretch",
                disabled=in_order or not customer_ready or not validity_ready,
-               on_click=add_order_item, args=(run["run_id"], snapshot, run.get("drawing")))
+               on_click=guarded_callback(add_order_item), args=(run["run_id"], snapshot, run.get("drawing")))
     if in_order:
         st.html('<p class="record-meta">已加入 <a class="record-link" href="#current-order" target="_self">本单清单</a></p>')
     if quote_id is not None:
@@ -2164,7 +2166,7 @@ def render_saved_quote(record: dict, source_available: bool) -> None:
             if quote_validity(snapshot.get("valid_until")) != "有效期内":
                 line_position = st.selectbox("选择重新核价的明细", range(1, len(snapshot["items"]) + 1),
                                              format_func=lambda number: f'第 {number} 项 · {snapshot["items"][number - 1]["filename"]}')
-                st.button("复制并重新核价", type="primary", on_click=copy_quote, args=(record, line_position))
+                st.button("复制并重新核价", type="primary", on_click=guarded_callback(copy_quote), args=(record, line_position))
                 st.caption("多件报价请逐项核对后加入本单，重新保存整单。")
             render_order_details(snapshot, record["id"])
         return
@@ -2183,7 +2185,7 @@ def render_saved_quote(record: dict, source_available: bool) -> None:
             st.caption(f"来源报价 · {source_number}（来源数据不可用）")
     status = render_validity(snapshot)
     copy_label = "复制并重新核价" if status == "已过期" else "复制改价"
-    st.button(copy_label, type="primary", on_click=copy_quote, args=(record,))
+    st.button(copy_label, type="primary", on_click=guarded_callback(copy_quote), args=(record,))
     parameters, delivery = st.columns((1, 1.25), gap="medium")
     with parameters, st.container(key="record-parameters"):
         st.html('<h2 class="panel-heading">已确认规格</h2>')
@@ -2358,7 +2360,7 @@ def render_review_record(filename: str, review: dict, quote: dict) -> None:
         record["quote"] = {key: quote[key] for _, key in QUOTE_OPTIONS}
     st.caption("识图核验记录")
     st.json(record, expanded=False)
-    st.download_button("下载核验记录", json.dumps(record, ensure_ascii=False, indent=2),
+    private_download_button(st, "下载核验记录", json.dumps(record, ensure_ascii=False, indent=2),
                        "识图核验记录.json", "application/json", on_click="ignore")
 
 
@@ -2390,6 +2392,7 @@ def render_reference_data() -> None:
 def main() -> None:
     st.set_page_config(page_title="戴南钢算AI", layout="wide")
     st.html(UI_STYLES)
+    visitor_gate()
     view = st.query_params.get("view")
     report_context = (view, st.query_params.get("quote"))
     if st.session_state.get("report_context") != report_context:
@@ -2447,7 +2450,7 @@ def main() -> None:
             if run.get("followed_up") and quote:
                 st.caption(f'已补填厚度 {run["inquiry"]["thickness_mm"]:.1f} mm，续算完成。')
                 st.button("查看余料拼单", key="judge_scrap",
-                          on_click=select_preset, args=("PRESET_3_SCRAP_MATCH",))
+                          on_click=guarded_callback(select_preset), args=("PRESET_3_SCRAP_MATCH",))
             if run or review is not None:
                 with st.expander("处理详情", expanded=True,
                                  key=f'processing-details-{st.session_state.get("customer_revision", 0)}', on_change="rerun"):

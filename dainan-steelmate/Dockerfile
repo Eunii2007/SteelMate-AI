@@ -3,14 +3,15 @@ FROM python:3.12-slim
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
-    DAINAN_QUOTE_DB=/var/lib/dainan-steel-ai/quotes.sqlite3
+    DAINAN_STORAGE_MODE=visitor \
+    DAINAN_VISITOR_DATA_ROOT=/var/lib/dainan-steel-ai/visitors
 
 WORKDIR /app
 
 COPY requirements.txt ./
 RUN python -m pip install --no-cache-dir -r requirements.txt
 
-COPY app.py quote_store.py workbench.css ./
+COPY app.py quote_store.py visitor_context.py visitor_ui.py workbench.css ./
 COPY core/ ./core/
 COPY data/ ./data/
 COPY .streamlit/config.toml ./.streamlit/config.toml

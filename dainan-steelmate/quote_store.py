@@ -1,7 +1,6 @@
 import json
 import hashlib
 import io
-import os
 import sqlite3
 import warnings
 from contextlib import closing, contextmanager
@@ -9,6 +8,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from PIL import Image
+
+from visitor_context import private_database_path
 
 
 SCRAP_REVIEW_STATUSES = ("待复核", "确认可供", "无法供料")
@@ -86,11 +87,7 @@ def clean_customer_info(customer: dict | None = None) -> dict[str, str]:
 
 
 def database_path() -> Path:
-    if override := os.environ.get("DAINAN_QUOTE_DB"):
-        return Path(override).expanduser()
-    if app_data := os.environ.get("LOCALAPPDATA"):
-        return Path(app_data) / "DainanSteelAI" / "quotes.sqlite3"
-    return Path.home() / ".dainan-steel-ai" / "quotes.sqlite3"
+    return private_database_path()
 
 
 def _initialize_schema(connection: sqlite3.Connection) -> None:
@@ -129,7 +126,7 @@ def _initialize_schema(connection: sqlite3.Connection) -> None:
 @contextmanager
 def connect_database():
     path = database_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     with closing(sqlite3.connect(path)) as connection:
         connection.execute("PRAGMA foreign_keys = ON")
         _initialize_schema(connection)
